@@ -1,6 +1,6 @@
-# Trace — Generative Wallpaper Studio
+# Trace -- Computational Studio October 2026
 
-A self-contained mouse-tracking artwork generator. It uses vanilla JavaScript, HTML5 canvas, and CSS; no build step, server, or external dependencies are required.
+A self-contained mouse-tracking artwork generator built with vanilla JavaScript, HTML5 canvas, and CSS. No build step, server, or external dependencies are required.
 
 ## Screenshots
 
@@ -14,7 +14,7 @@ Expand the panel to start another capture, adjust the palette, or download the w
 
 ## Run
 
-Open `index.html` in a modern desktop browser.
+Open `index.html` in a modern desktop browser. The page loads its styles and behavior from the `source` folder.
 
 ## Use
 
@@ -25,3 +25,15 @@ Open `index.html` in a modern desktop browser.
 5. Select **Download wallpaper** to save the 3840 × 2160 PNG.
 
 Drag the handle to reposition the control panel. Use the adjacent toggle to minimize or expand it; the panel minimizes automatically after rendering. Generated forms and curves vary in rotation, scale, and direction.
+
+## Project structure
+
+```text
+index.html
+source/
+  script.js
+  style.css
+screenshots/
+  artwork.png
+  controls.png
+```
