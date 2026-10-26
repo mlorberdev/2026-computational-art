@@ -171,6 +171,40 @@
             border-top: 1px solid var(--line);
         }
 
+        .controls {
+            transition: opacity .55s ease;
+        }
+
+        .is-capturing .controls {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .capture-stop-detached {
+            position: fixed !important;
+            z-index: 30;
+            top: 0;
+            left: 0;
+            margin: 0;
+            opacity: .1;
+            transition: transform .55s cubic-bezier(.2, .75, .25, 1), opacity .22s ease;
+            will-change: transform, opacity;
+        }
+
+        .capture-stop-detached:hover,
+        .capture-stop-detached:focus-visible {
+            opacity: .5;
+        }
+
+        .capture-stop-detached.capture-stop-returning {
+            opacity: 1;
+        }
+
+        .capture-stop-detached.capture-stop-returning:hover,
+        .capture-stop-detached.capture-stop-returning:focus-visible {
+            opacity: .5;
+        }
+
         button {
             min-height: 40px;
             padding: 0 15px;
@@ -191,6 +225,7 @@
         }
 
         button:active:not(:disabled) { transform: translateY(1px); }
+        .capture-stop-detached:active:not(:disabled) { transform: none; }
         button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
         button:disabled { opacity: .42; cursor: not-allowed; }
 
@@ -348,8 +383,10 @@
             const OUTPUT_HEIGHT = 2160;
             const canvas = document.getElementById("artwork");
             const context = canvas.getContext("2d", { alpha: false });
+            const app = document.querySelector(".app");
             const startButton = document.getElementById("startButton");
             const stopButton = document.getElementById("stopButton");
+            const stopButtonHome = stopButton.parentElement;
             const downloadButton = document.getElementById("downloadButton");
             const paletteButton = document.getElementById("paletteButton");
             const timer = document.getElementById("timer");
@@ -381,6 +418,8 @@
             let sampleTimer = null;
             let latestPosition = { x: 0.5, y: 0.5 };
             let palette = { hue: 0, saturation: 100, lightness: 0 };
+            let stopPlaceholder = null;
+            let stopReturnTimer = null;
 
             const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
             const wrapHue = value => ((value % 360) + 360) % 360;
@@ -418,20 +457,80 @@
                 drawPreviewPoint(trackingData[trackingData.length - 1], trackingData[trackingData.length - 2]);
             }
 
+            function centerDetachedStopButton() {
+                const rect = stopButton.getBoundingClientRect();
+                stopButton.style.transform = `translate3d(${(window.innerWidth - rect.width) / 2}px, ${(window.innerHeight - rect.height) / 2}px, 0)`;
+            }
+
+            function detachStopButton() {
+                const rect = stopButton.getBoundingClientRect();
+                stopPlaceholder = document.createElement("span");
+                stopPlaceholder.setAttribute("aria-hidden", "true");
+                stopPlaceholder.style.cssText = `display: block; flex: 0 0 ${rect.width}px; width: ${rect.width}px; height: ${rect.height}px;`;
+                stopButton.replaceWith(stopPlaceholder);
+                stopButton.classList.add("capture-stop-detached");
+                stopButton.style.width = `${rect.width}px`;
+                stopButton.style.height = `${rect.height}px`;
+                stopButton.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0)`;
+                document.body.appendChild(stopButton);
+                void stopButton.offsetWidth;
+                requestAnimationFrame(() => {
+                    if (capturing) centerDetachedStopButton();
+                });
+            }
+
+            function returnStopButton() {
+                const target = stopPlaceholder
+                    ? stopPlaceholder.getBoundingClientRect()
+                    : stopButtonHome.getBoundingClientRect();
+                let returned = false;
+
+                const finishReturn = () => {
+                    if (returned) return;
+                    returned = true;
+                    window.clearTimeout(stopReturnTimer);
+                    stopButton.removeEventListener("transitionend", onStopTransitionEnd);
+                    stopButton.classList.remove("capture-stop-detached");
+                    stopButton.classList.remove("capture-stop-returning");
+                    stopButton.style.removeProperty("transform");
+                    stopButton.style.removeProperty("opacity");
+                    stopButton.style.removeProperty("width");
+                    stopButton.style.removeProperty("height");
+                    if (stopPlaceholder && stopPlaceholder.isConnected) {
+                        stopPlaceholder.replaceWith(stopButton);
+                    } else {
+                        stopButtonHome.appendChild(stopButton);
+                    }
+                    stopButton.disabled = true;
+                    stopPlaceholder = null;
+                    startButton.disabled = false;
+                };
+
+                const onStopTransitionEnd = event => {
+                    if (event.propertyName === "transform") finishReturn();
+                };
+
+                stopButton.addEventListener("transitionend", onStopTransitionEnd);
+                stopButton.classList.add("capture-stop-returning");
+                stopButton.style.transform = `translate3d(${target.left}px, ${target.top}px, 0)`;
+                stopReturnTimer = window.setTimeout(finishReturn, 700);
+            }
+
             function finishCapture(message) {
                 if (!capturing) return;
                 const elapsed = Math.min(CAPTURE_DURATION, performance.now() - captureStartedAt);
                 capturing = false;
                 window.clearInterval(sampleTimer);
                 sampleTimer = null;
+                app.classList.remove("is-capturing");
                 sessionPanel.classList.remove("is-capturing");
-                startButton.disabled = false;
                 stopButton.disabled = true;
                 sessionState.textContent = "Artwork generated";
                 updateSession(elapsed);
                 drawArtwork(trackingData, false);
                 setStatus(`${trackingData.length} movement samples shaped your wallpaper. Adjust the palette or download the PNG.`);
                 if (message) setStatus(message);
+                returnStopButton();
             }
 
             function beginCapture() {
@@ -440,12 +539,14 @@
                 captureStartedAt = performance.now();
                 capturing = true;
                 latestPosition = { x: 0.5, y: 0.5 };
+                app.classList.add("is-capturing");
                 sessionPanel.classList.add("is-capturing");
                 startButton.disabled = true;
                 stopButton.disabled = false;
+                detachStopButton();
                 sessionState.textContent = "Recording movement";
                 updateSession(0);
-                setStatus("Move your pointer anywhere in the window. A point is sampled every 100 ms.");
+                setStatus("Move freely: jumps over 10% of the viewport width draw triangles; height jumps draw rectangles.");
                 drawBackground([]);
                 sampleTimer = window.setInterval(() => {
                     samplePosition();
@@ -472,7 +573,7 @@
                     : 0.5;
                 const hue = wrapHue(averageX * 360 + palette.hue + 224);
                 const saturation = clamp((28 + averageY * 34) * (palette.saturation / 100), 0, 100);
-                const lightness = clamp(5 + palette.lightness * 0.22, 0, 100);
+                const lightness = clamp(92 + palette.lightness * 0.22, 72, 99);
                 context.globalCompositeOperation = "source-over";
                 context.fillStyle = colorFor(hue, saturation, lightness, 1);
                 context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
@@ -481,7 +582,7 @@
                     OUTPUT_WIDTH * averageX, OUTPUT_HEIGHT * averageY, 0,
                     OUTPUT_WIDTH * averageX, OUTPUT_HEIGHT * averageY, OUTPUT_WIDTH * 0.72
                 );
-                glow.addColorStop(0, colorFor(hue + 36, saturation, lightness + 15, 0.38));
+                glow.addColorStop(0, colorFor(hue + 36, saturation, lightness + 8, 0.32));
                 glow.addColorStop(1, colorFor(hue - 35, saturation, lightness, 0));
                 context.fillStyle = glow;
                 context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
@@ -490,19 +591,20 @@
             function drawPreviewPoint(point, previous) {
                 const x = point.x * OUTPUT_WIDTH;
                 const y = point.y * OUTPUT_HEIGHT;
-                const hue = point.x * 360 + palette.hue;
                 const radius = OUTPUT_WIDTH * 0.012;
 
                 context.save();
-                context.globalCompositeOperation = "screen";
+                context.globalCompositeOperation = "source-over";
                 if (previous) {
+                    drawMovementShape(previous, point, OUTPUT_WIDTH / 1000);
                     context.beginPath();
                     context.moveTo(previous.x * OUTPUT_WIDTH, previous.y * OUTPUT_HEIGHT);
                     context.lineTo(x, y);
-                    context.strokeStyle = colorFor(hue, 78, 72 + palette.lightness, 0.45);
-                    context.lineWidth = OUTPUT_WIDTH * 0.0015;
+                    context.strokeStyle = "#000";
+                    context.lineWidth = OUTPUT_WIDTH * 0.0009;
                     context.stroke();
                 }
+                const hue = point.x * 360 + palette.hue;
                 const glow = context.createRadialGradient(x, y, 0, x, y, radius);
                 glow.addColorStop(0, colorFor(hue, 80, 78 + palette.lightness, 0.6));
                 glow.addColorStop(1, colorFor(hue + 38, 72, 55 + palette.lightness, 0));
@@ -510,6 +612,51 @@
                 context.beginPath();
                 context.arc(x, y, radius, 0, Math.PI * 2);
                 context.fill();
+                context.restore();
+            }
+
+            function drawMovementShape(previous, current, scale) {
+                const deltaX = current.x - previous.x;
+                const deltaY = current.y - previous.y;
+                const startX = previous.x * OUTPUT_WIDTH;
+                const startY = previous.y * OUTPUT_HEIGHT;
+                const endX = current.x * OUTPUT_WIDTH;
+                const endY = current.y * OUTPUT_HEIGHT;
+                const distance = Math.hypot(endX - startX, endY - startY);
+
+                if ((Math.abs(deltaX) <= 0.1 && Math.abs(deltaY) <= 0.1) || distance === 0) return;
+
+                const normalX = -(endY - startY) / distance;
+                const normalY = (endX - startX) / distance;
+                const lineWidth = 0.9 * scale;
+
+                context.save();
+                context.globalCompositeOperation = "source-over";
+                context.strokeStyle = "#000";
+                context.lineWidth = lineWidth;
+                context.lineCap = "round";
+                context.lineJoin = "round";
+
+                if (Math.abs(deltaX) > 0.1) {
+                    const offset = distance * 0.38;
+                    context.beginPath();
+                    context.moveTo(startX, startY);
+                    context.lineTo(endX, endY);
+                    context.lineTo((startX + endX) / 2 + normalX * offset, (startY + endY) / 2 + normalY * offset);
+                    context.closePath();
+                    context.stroke();
+                }
+
+                if (Math.abs(deltaY) > 0.1) {
+                    const halfWidth = Math.max(OUTPUT_WIDTH * 0.018, distance * 0.11);
+                    context.beginPath();
+                    context.moveTo(startX + normalX * halfWidth, startY + normalY * halfWidth);
+                    context.lineTo(endX + normalX * halfWidth, endY + normalY * halfWidth);
+                    context.lineTo(endX - normalX * halfWidth, endY - normalY * halfWidth);
+                    context.lineTo(startX - normalX * halfWidth, startY - normalY * halfWidth);
+                    context.closePath();
+                    context.stroke();
+                }
                 context.restore();
             }
 
@@ -529,7 +676,7 @@
                 context.lineJoin = "round";
 
                 if (centers.length > 1) {
-                    context.globalCompositeOperation = "screen";
+                    context.globalCompositeOperation = "source-over";
                     context.lineWidth = 2.2 * scale;
                     context.beginPath();
                     context.moveTo(centers[0].x, centers[0].y);
@@ -541,8 +688,7 @@
                         const middleY = (previous.y + current.y) / 2;
                         context.quadraticCurveTo(middleX + wave, middleY - wave, current.x, current.y);
                     }
-                    const first = points[0];
-                    context.strokeStyle = colorFor(first.x * 360 + palette.hue, 80, 70 + palette.lightness, preview ? 0.58 : 0.28);
+                    context.strokeStyle = "#000";
                     context.stroke();
                 }
 
@@ -580,12 +726,16 @@
                         center.x + wobbleX, center.y - radius
                     );
                     context.fill();
+                    context.globalCompositeOperation = "source-over";
+                    context.strokeStyle = "#000";
+                    context.lineWidth = 0.8 * scale;
+                    context.stroke();
 
                     if (index > 0 && index % 2 === 0) {
                         const previous = centers[index - 1];
                         const bend = (random() - 0.5) * 160 * scale;
-                        context.globalCompositeOperation = "screen";
-                        context.strokeStyle = colorFor(hue + 115, saturation, lightness + 20, preview ? 0.13 : 0.075);
+                        context.globalCompositeOperation = "source-over";
+                        context.strokeStyle = "#000";
                         context.lineWidth = (0.65 + random() * 1.8) * scale;
                         context.beginPath();
                         context.moveTo(previous.x, previous.y);
@@ -596,6 +746,8 @@
                         );
                         context.stroke();
                     }
+
+                    if (index > 0) drawMovementShape(points[index - 1], point, scale);
                 });
 
                 context.restore();
@@ -645,6 +797,12 @@
                     y: event.clientY / Math.max(window.innerHeight, 1)
                 };
             }, { passive: true });
+
+            window.addEventListener("resize", () => {
+                if (capturing && stopButton.classList.contains("capture-stop-detached")) {
+                    centerDetachedStopButton();
+                }
+            });
 
             startButton.addEventListener("click", beginCapture);
             stopButton.addEventListener("click", () => finishCapture("Capture stopped. Your artwork is ready to adjust or download."));
