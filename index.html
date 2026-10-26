@@ -78,7 +78,7 @@
         .drag-handle {
             position: absolute;
             top: 7px;
-            right: 8px;
+            right: 42px;
             z-index: 2;
             display: grid;
             width: 28px;
@@ -101,6 +101,42 @@
         }
 
         .drag-handle:active { cursor: grabbing; }
+
+        .minimize-button {
+            position: absolute;
+            top: 7px;
+            right: 8px;
+            z-index: 2;
+            display: grid;
+            width: 28px;
+            min-height: 24px;
+            padding: 0;
+            place-items: center;
+            border: 0;
+            color: var(--muted);
+            background: transparent;
+            font-size: 19px;
+            line-height: 1;
+        }
+
+        .minimize-button:hover:not(:disabled) {
+            border: 0;
+            color: #f1f3fa;
+            background: transparent;
+        }
+
+        .controls.is-minimized {
+            display: block;
+            width: auto;
+            min-width: 88px;
+            min-height: 42px;
+            padding: 30px 16px 10px;
+            transform: none;
+        }
+
+        .controls.is-minimized > :not(.drag-handle):not(.minimize-button) {
+            display: none;
+        }
 
         .brand {
             display: flex;
@@ -228,6 +264,7 @@
             z-index: 1000;
             top: 0;
             left: 0;
+            min-width: 240px;
             margin: 0;
             opacity: .5;
             transition: transform .55s cubic-bezier(.2, .75, .25, 1), opacity 1s ease-in-out;
@@ -239,6 +276,24 @@
             border-color: #9299ad;
             color: #9299ad;
             background: transparent;
+        }
+
+        .capture-stop-detached:disabled {
+            opacity: 1;
+            cursor: default;
+        }
+
+        .capture-stop-priming .stop-prompt {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+            animation: prompt-pulse 1.8s ease-in-out infinite;
+        }
+
+        @keyframes prompt-pulse {
+            0%, 100% { opacity: .72; }
+            50% { opacity: 1; }
         }
 
         .capture-stop-detached:hover {
@@ -368,6 +423,7 @@
 
         <section class="controls" aria-label="Artwork controls">
             <button class="drag-handle" id="dragHandle" type="button" aria-label="Drag to move controls" title="Drag to move controls">⠿</button>
+            <button class="minimize-button" id="minimizeButton" type="button" aria-label="Minimize controls" title="Minimize controls">−</button>
             <div class="brand">
                 <span class="eyebrow">Generative wallpaper studio</span>
                 <h1>Trace / <span style="color: var(--accent)">01</span></h1>
@@ -383,7 +439,7 @@
                             <span id="sessionState">Ready when you are</span>
                         </div>
                     </div>
-                    <output class="timer" id="timer" aria-label="Time remaining">01:00</output>
+                    <output class="timer" id="timer" aria-label="Time remaining">00:20</output>
                 </div>
                 <div
                     class="progress-track"
@@ -391,7 +447,7 @@
                     role="progressbar"
                     aria-label="Capture progress"
                     aria-valuemin="0"
-                    aria-valuemax="60"
+                    aria-valuemax="20"
                     aria-valuenow="0">
                     <div class="progress-bar" id="progressBar"></div>
                 </div>
@@ -399,7 +455,12 @@
 
             <div class="actions">
                 <button class="primary" id="startButton" type="button">Start capture</button>
-                <button id="stopButton" type="button" disabled>Stop &amp; generate art</button>
+                <button id="stopButton" type="button" disabled>
+                    <span class="stop-prompt" id="stopPrompt">
+                        <span id="stopButtonLabel">Stop &amp; generate art</span>
+                        <span id="primingCount" hidden></span>
+                    </span>
+                </button>
                 <button id="downloadButton" type="button">Download wallpaper</button>
                 <button id="paletteButton" type="button">Change palette</button>
 
@@ -410,14 +471,14 @@
                     </label>
                     <label class="palette-control">
                         <span class="palette-label">Saturation <output id="saturationValue">100%</output></span>
-                        <input id="saturationControl" type="range" min="0" max="160" value="100" aria-label="Saturation level">
+                        <input id="saturationControl" type="range" min="0" max="100" value="70" aria-label="Saturation level">
                     </label>
                     <label class="palette-control">
                         <span class="palette-label">Lightness <output id="lightnessValue">0</output></span>
                         <input id="lightnessControl" type="range" min="-30" max="30" value="0" aria-label="Lightness shift">
                     </label>
                 </div>
-                <p class="status" id="status" role="status" aria-live="polite">Your 4K canvas is ready. Capture a minute of movement to begin.</p>
+                <p class="status" id="status" role="status" aria-live="polite">Your 4K canvas is ready. Capture 20 seconds of movement to begin.</p>
             </div>
         </section>
     </main>
@@ -426,8 +487,10 @@
         (() => {
             "use strict";
 
-            const CAPTURE_DURATION = 60_000;
+            const CAPTURE_DURATION = 20_000;
+            const START_POINT_DURATION = 5_000;
             const SAMPLE_INTERVAL = 100;
+            const MANUAL_STOP_TAIL = 2_000;
             const OUTPUT_WIDTH = 3840;
             const OUTPUT_HEIGHT = 2160;
             const canvas = document.getElementById("artwork");
@@ -435,8 +498,11 @@
             const app = document.querySelector(".app");
             const controls = document.querySelector(".controls");
             const dragHandle = document.getElementById("dragHandle");
+            const minimizeButton = document.getElementById("minimizeButton");
             const startButton = document.getElementById("startButton");
             const stopButton = document.getElementById("stopButton");
+            const stopButtonLabel = document.getElementById("stopButtonLabel");
+            const primingCount = document.getElementById("primingCount");
             const stopButtonHome = stopButton.parentElement;
             const downloadButton = document.getElementById("downloadButton");
             const paletteButton = document.getElementById("paletteButton");
@@ -464,11 +530,21 @@
             canvas.height = OUTPUT_HEIGHT;
 
             let trackingData = [];
+            let renderedTrackingData = [];
             let capturing = false;
+            let preparingCapture = false;
             let captureStartedAt = 0;
             let sampleTimer = null;
+            let preparationTimer = null;
+            let preparationStartedAt = 0;
             let latestPosition = { x: 0.5, y: 0.5 };
-            let palette = { hue: 0, saturation: 100, lightness: 0 };
+            // Split-complementary hues with a small analogous pair around the base.
+            const PALETTE_HARMONY = [0, 15, 345, 150, 210];
+            let palette = {
+                hue: Math.floor(Math.random() * 360),
+                saturation: 70,
+                lightness: 0
+            };
             let stopPlaceholder = null;
             let sessionPlaceholder = null;
             let stopReturnTimer = null;
@@ -478,6 +554,18 @@
             const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
             const wrapHue = value => ((value % 360) + 360) % 360;
             const setStatus = message => { status.textContent = message; };
+
+            function debounce(callback, delay) {
+                let timeout = null;
+                return (...args) => {
+                    window.clearTimeout(timeout);
+                    timeout = window.setTimeout(() => callback(...args), delay);
+                };
+            }
+
+            function paletteHue(index, shift = 0) {
+                return wrapHue(palette.hue + PALETTE_HARMONY[index % PALETTE_HARMONY.length] + shift);
+            }
 
             function colorFor(hue, saturation, lightness, alpha) {
                 return `hsla(${wrapHue(hue)}, ${clamp(saturation, 0, 100)}%, ${clamp(lightness, 0, 100)}%, ${alpha})`;
@@ -490,15 +578,22 @@
                 timer.textContent = timer.value;
                 const progress = clamp((elapsed / CAPTURE_DURATION) * 100, 0, 100);
                 progressBar.style.width = `${progress}%`;
-                progressTrack.setAttribute("aria-valuenow", String(Math.floor(progress * 60 / 100)));
+                progressTrack.setAttribute("aria-valuenow", String(Math.floor(Math.min(elapsed, CAPTURE_DURATION) / 1000)));
             }
 
             function updatePaletteControls() {
-                hueValue.value = `${palette.hue}°`;
+                hueControl.value = String(palette.hue);
+                saturationControl.value = String(palette.saturation);
+                lightnessControl.value = String(palette.lightness);
+                updatePaletteReadout();
+            }
+
+            function updatePaletteReadout(values = palette) {
+                hueValue.value = `${values.hue}°`;
                 hueValue.textContent = hueValue.value;
-                saturationValue.value = `${palette.saturation}%`;
+                saturationValue.value = `${values.saturation}%`;
                 saturationValue.textContent = saturationValue.value;
-                lightnessValue.value = String(palette.lightness);
+                lightnessValue.value = String(values.lightness);
                 lightnessValue.textContent = lightnessValue.value;
             }
 
@@ -543,13 +638,26 @@
                 event.preventDefault();
             }
 
-            function samplePosition() {
-                trackingData.push({
+            function recordPosition(time) {
+                const previous = trackingData[trackingData.length - 1];
+                const point = {
                     x: clamp(latestPosition.x, 0, 1),
                     y: clamp(latestPosition.y, 0, 1),
-                    time: performance.now() - captureStartedAt
-                });
-                drawPreviewPoint(trackingData[trackingData.length - 1], trackingData[trackingData.length - 2]);
+                    time
+                };
+                point.interval = previous ? time - previous.time : time;
+                point.deltaX = previous ? point.x - previous.x : 0;
+                point.deltaY = previous ? point.y - previous.y : 0;
+                point.change = Math.max(Math.abs(point.deltaX), Math.abs(point.deltaY));
+                point.speed = point.interval > 0
+                    ? Math.hypot(point.deltaX, point.deltaY) / (point.interval / 1000)
+                    : 0;
+                trackingData.push(point);
+                drawPreviewPoint(point);
+            }
+
+            function samplePosition() {
+                recordPosition(performance.now() - captureStartedAt);
             }
 
             function detachSessionPanel() {
@@ -582,13 +690,13 @@
                 stopPlaceholder.style.cssText = `display: block; flex: 0 0 ${rect.width}px; width: ${rect.width}px; height: ${rect.height}px;`;
                 stopButton.replaceWith(stopPlaceholder);
                 stopButton.classList.add("capture-stop-detached");
-                stopButton.style.width = `${rect.width}px`;
+                stopButton.style.width = `${Math.max(rect.width, 240)}px`;
                 stopButton.style.height = `${rect.height}px`;
                 stopButton.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0)`;
                 document.body.appendChild(stopButton);
                 void stopButton.offsetWidth;
                 requestAnimationFrame(() => {
-                    if (capturing) centerDetachedStopButton();
+                    if (capturing || preparingCapture) centerDetachedStopButton();
                 });
             }
 
@@ -629,9 +737,10 @@
                 stopReturnTimer = window.setTimeout(finishReturn, 700);
             }
 
-            function finishCapture(message) {
+            function finishCapture(message, discardRecentData = false) {
                 if (!capturing) return;
-                const elapsed = Math.min(CAPTURE_DURATION, performance.now() - captureStartedAt);
+                const actualElapsed = performance.now() - captureStartedAt;
+                const elapsed = Math.min(CAPTURE_DURATION, actualElapsed);
                 capturing = false;
                 window.clearInterval(sampleTimer);
                 sampleTimer = null;
@@ -641,34 +750,112 @@
                 stopButton.disabled = true;
                 sessionState.textContent = "Artwork generated";
                 updateSession(elapsed);
-                drawArtwork(trackingData, false);
-                setStatus(`${trackingData.length} movement samples shaped your wallpaper. Adjust the palette or download the PNG.`);
-                if (message) setStatus(message);
+                const cutoff = actualElapsed - MANUAL_STOP_TAIL;
+                renderedTrackingData = discardRecentData
+                    ? trackingData.filter(point => point.time <= cutoff)
+                    : trackingData.slice();
+                drawArtwork(renderedTrackingData);
+                setControlsMinimized(true);
+                setStatus(`Rendered ${renderedTrackingData.length} of ${trackingData.length} captured samples. Adjust the palette or download the PNG.`);
+                if (message) setStatus(`${message} ${renderedTrackingData.length} of ${trackingData.length} captured samples were rendered.`);
                 returnStopButton();
             }
 
-            function beginCapture() {
-                if (capturing) return;
-                trackingData = [];
-                captureStartedAt = performance.now();
-                capturing = true;
-                latestPosition = { x: 0.5, y: 0.5 };
-                app.classList.add("is-capturing");
-                sessionPanel.classList.add("is-capturing");
-                startButton.disabled = true;
+            function beginTimedCapture() {
+                preparingCapture = false;
+                window.clearInterval(preparationTimer);
+                preparationTimer = null;
+                stopButton.classList.remove("capture-stop-priming");
+                stopButtonLabel.textContent = "Stop & generate art";
+                primingCount.hidden = true;
                 stopButton.disabled = false;
-                detachSessionPanel();
-                detachStopButton();
+                capturing = true;
+                captureStartedAt = performance.now();
+                recordPosition(0);
                 sessionState.textContent = "Recording movement";
                 updateSession(0);
-                setStatus("Move freely: jumps over 10% of the viewport width draw triangles; height jumps draw rectangles.");
-                drawBackground([]);
+                setStatus("Follow the movement. Your captured coordinates will shape the final layered artwork.");
                 sampleTimer = window.setInterval(() => {
                     samplePosition();
                     const elapsed = performance.now() - captureStartedAt;
                     updateSession(elapsed);
                     if (elapsed >= CAPTURE_DURATION) finishCapture();
                 }, SAMPLE_INTERVAL);
+            }
+
+            function beginCapture() {
+                if (capturing || preparingCapture) return;
+                trackingData = [];
+                renderedTrackingData = [];
+                preparingCapture = true;
+                preparationStartedAt = performance.now();
+                app.classList.add("is-capturing");
+                sessionPanel.classList.add("is-capturing");
+                startButton.disabled = true;
+                stopButton.disabled = true;
+                stopButton.classList.add("capture-stop-priming");
+                stopButtonLabel.textContent = "Pick a start point";
+                primingCount.hidden = false;
+                primingCount.textContent = "5";
+                detachSessionPanel();
+                detachStopButton();
+                sessionState.textContent = "Choose a start point";
+                updateSession(0);
+                setStatus("Choose where your movement will begin. The 20-second capture starts after the countdown.");
+                drawBackground([]);
+                preparationTimer = window.setInterval(() => {
+                    const elapsed = performance.now() - preparationStartedAt;
+                    const seconds = Math.max(1, Math.ceil((START_POINT_DURATION - elapsed) / 1000));
+                    primingCount.textContent = String(seconds);
+                    if (elapsed >= START_POINT_DURATION) beginTimedCapture();
+                }, SAMPLE_INTERVAL);
+            }
+
+            function drawBackground(points) {
+                const averageX = points.length
+                    ? points.reduce((sum, point) => sum + point.x, 0) / points.length
+                    : 0.5;
+                const averageY = points.length
+                    ? points.reduce((sum, point) => sum + point.y, 0) / points.length
+                    : 0.5;
+                const hue = paletteHue(0, averageX * 45);
+                const saturation = clamp((24 + averageY * 38) * (palette.saturation / 70), 0, 100);
+                const lightness = clamp(8 + palette.lightness * 0.2, 2, 22);
+                context.globalCompositeOperation = "source-over";
+                context.fillStyle = colorFor(hue, saturation, lightness, 1);
+                context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+
+                const glow = context.createRadialGradient(
+                    OUTPUT_WIDTH * averageX, OUTPUT_HEIGHT * averageY, 0,
+                    OUTPUT_WIDTH * averageX, OUTPUT_HEIGHT * averageY, OUTPUT_WIDTH * 0.78
+                );
+                glow.addColorStop(0, colorFor(hue + 36, saturation + 10, lightness + 17, 0.52));
+                glow.addColorStop(0.45, colorFor(hue - 24, saturation, lightness + 7, 0.18));
+                glow.addColorStop(1, colorFor(hue - 35, saturation, lightness, 0));
+                context.fillStyle = glow;
+                context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+            }
+
+            function drawPreviewPoint(point) {
+                drawCoordinateGradient(point, true);
+            }
+
+            function drawCoordinateGradient(point, preview = false) {
+                const x = point.x * OUTPUT_WIDTH;
+                const y = point.y * OUTPUT_HEIGHT;
+                const hue = paletteHue(trackingData.length, point.x * 24);
+                const radius = OUTPUT_WIDTH * (preview ? 0.012 : 0.025);
+                const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+                gradient.addColorStop(0, colorFor(hue, palette.saturation, 68 + palette.lightness, preview ? 0.3 : 0.42));
+                gradient.addColorStop(0.42, colorFor(paletteHue(trackingData.length + 1, 8), palette.saturation, 58 + palette.lightness, preview ? 0.14 : 0.2));
+                gradient.addColorStop(1, colorFor(paletteHue(trackingData.length + 2, 12), palette.saturation, 45 + palette.lightness, 0));
+                context.save();
+                context.globalCompositeOperation = "screen";
+                context.beginPath();
+                context.arc(x, y, radius, 0, Math.PI * 2);
+                context.fillStyle = gradient;
+                context.fill();
+                context.restore();
             }
 
             function seededRandom(seed) {
@@ -679,195 +866,135 @@
                 };
             }
 
-            function drawBackground(points) {
-                const averageX = points.length
-                    ? points.reduce((sum, point) => sum + point.x, 0) / points.length
-                    : 0.5;
-                const averageY = points.length
-                    ? points.reduce((sum, point) => sum + point.y, 0) / points.length
-                    : 0.5;
-                const hue = wrapHue(averageX * 360 + palette.hue + 224);
-                const saturation = clamp((28 + averageY * 34) * (palette.saturation / 100), 0, 100);
-                const lightness = clamp(92 + palette.lightness * 0.22, 72, 99);
-                context.globalCompositeOperation = "source-over";
-                context.fillStyle = colorFor(hue, saturation, lightness, 1);
-                context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-
-                const glow = context.createRadialGradient(
-                    OUTPUT_WIDTH * averageX, OUTPUT_HEIGHT * averageY, 0,
-                    OUTPUT_WIDTH * averageX, OUTPUT_HEIGHT * averageY, OUTPUT_WIDTH * 0.72
-                );
-                glow.addColorStop(0, colorFor(hue + 36, saturation, lightness + 8, 0.32));
-                glow.addColorStop(1, colorFor(hue - 35, saturation, lightness, 0));
-                context.fillStyle = glow;
-                context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+            function setControlsMinimized(minimized) {
+                const position = controls.getBoundingClientRect();
+                controls.classList.toggle("is-minimized", minimized);
+                if (minimized) setControlsPosition(position.left, position.top);
+                minimizeButton.textContent = minimized ? "×" : "−";
+                minimizeButton.setAttribute("aria-label", minimized ? "Expand controls" : "Minimize controls");
+                minimizeButton.title = minimized ? "Expand controls" : "Minimize controls";
             }
 
-            function drawPreviewPoint(point, previous) {
-                const x = point.x * OUTPUT_WIDTH;
-                const y = point.y * OUTPUT_HEIGHT;
-                const radius = OUTPUT_WIDTH * 0.012;
-
-                context.save();
-                context.globalCompositeOperation = "source-over";
-                if (previous) {
-                    drawMovementShape(previous, point, OUTPUT_WIDTH / 1000);
-                    context.beginPath();
-                    context.moveTo(previous.x * OUTPUT_WIDTH, previous.y * OUTPUT_HEIGHT);
-                    context.lineTo(x, y);
-                    context.strokeStyle = "#000";
-                    context.lineWidth = OUTPUT_WIDTH * 0.0009;
-                    context.stroke();
-                }
-                const hue = point.x * 360 + palette.hue;
-                const glow = context.createRadialGradient(x, y, 0, x, y, radius);
-                glow.addColorStop(0, colorFor(hue, 80, 78 + palette.lightness, 0.6));
-                glow.addColorStop(1, colorFor(hue + 38, 72, 55 + palette.lightness, 0));
-                context.fillStyle = glow;
-                context.beginPath();
-                context.arc(x, y, radius, 0, Math.PI * 2);
-                context.fill();
-                context.restore();
-            }
-
-            function drawMovementShape(previous, current, scale) {
-                const deltaX = current.x - previous.x;
-                const deltaY = current.y - previous.y;
-                const startX = previous.x * OUTPUT_WIDTH;
-                const startY = previous.y * OUTPUT_HEIGHT;
-                const endX = current.x * OUTPUT_WIDTH;
-                const endY = current.y * OUTPUT_HEIGHT;
-                const distance = Math.hypot(endX - startX, endY - startY);
-
-                if ((Math.abs(deltaX) <= 0.1 && Math.abs(deltaY) <= 0.1) || distance === 0) return;
-
-                const normalX = -(endY - startY) / distance;
-                const normalY = (endX - startX) / distance;
-                const lineWidth = 0.9 * scale;
-
-                context.save();
-                context.globalCompositeOperation = "source-over";
-                context.strokeStyle = "#000";
-                context.lineWidth = lineWidth;
-                context.lineCap = "round";
-                context.lineJoin = "round";
-
-                if (Math.abs(deltaX) > 0.1) {
-                    const offset = distance * 0.38;
-                    context.beginPath();
-                    context.moveTo(startX, startY);
-                    context.lineTo(endX, endY);
-                    context.lineTo((startX + endX) / 2 + normalX * offset, (startY + endY) / 2 + normalY * offset);
-                    context.closePath();
-                    context.stroke();
-                }
-
-                if (Math.abs(deltaY) > 0.1) {
-                    const halfWidth = Math.max(OUTPUT_WIDTH * 0.018, distance * 0.11);
-                    context.beginPath();
-                    context.moveTo(startX + normalX * halfWidth, startY + normalY * halfWidth);
-                    context.lineTo(endX + normalX * halfWidth, endY + normalY * halfWidth);
-                    context.lineTo(endX - normalX * halfWidth, endY - normalY * halfWidth);
-                    context.lineTo(startX - normalX * halfWidth, startY - normalY * halfWidth);
-                    context.closePath();
-                    context.stroke();
-                }
-                context.restore();
-            }
-
-            function drawArtwork(points, preview) {
+            function drawArtwork(points) {
                 drawBackground(points);
                 if (!points.length) return;
-
-                const random = seededRandom(points.length * 7919 + palette.hue * 31 + palette.saturation * 17 + palette.lightness * 13);
                 const scale = OUTPUT_WIDTH / 1000;
-                const centers = points.map(point => ({
-                    x: point.x * OUTPUT_WIDTH,
-                    y: point.y * OUTPUT_HEIGHT
-                }));
-
+                const seed = points.length * 7919 + palette.hue * 31 + palette.saturation * 17 + palette.lightness * 13;
+                const random = seededRandom(seed);
                 context.save();
                 context.lineCap = "round";
                 context.lineJoin = "round";
 
-                if (centers.length > 1) {
-                    context.globalCompositeOperation = "source-over";
-                    context.lineWidth = 2.2 * scale;
-                    context.beginPath();
-                    context.moveTo(centers[0].x, centers[0].y);
-                    for (let i = 1; i < centers.length; i++) {
-                        const previous = centers[i - 1];
-                        const current = centers[i];
-                        const wave = Math.sin(i * 0.31) * 32 * scale;
-                        const middleX = (previous.x + current.x) / 2;
-                        const middleY = (previous.y + current.y) / 2;
-                        context.quadraticCurveTo(middleX + wave, middleY - wave, current.x, current.y);
-                    }
-                    context.strokeStyle = "#000";
-                    context.stroke();
-                }
+                points.forEach((point, index) => {
+                    const x = point.x * OUTPUT_WIDTH;
+                    const y = point.y * OUTPUT_HEIGHT;
+                    const hue = paletteHue(index, point.x * 35 + Math.sin(index * 0.09) * 12);
+                    const saturation = clamp((38 + point.y * 58) * (palette.saturation / 70), 0, 100);
+                    const lightness = clamp(50 + Math.sin(index * 0.17) * 17 + palette.lightness, 4, 92);
+                    const elementScale = 0.55 + random() * 1.15;
+                    const rotation = (random() * 2 - 1) * Math.PI;
+                    const radius = (20 + random() * 46 + Math.abs(Math.sin(index * 0.13)) * 38) * scale;
 
-                centers.forEach((center, index) => {
-                    const point = points[index];
-                    const hue = point.x * 360 + palette.hue + Math.sin(index * 0.09) * 24;
-                    const saturation = clamp((38 + point.y * 58) * palette.saturation / 100, 0, 100);
-                    const lightness = clamp(48 + Math.sin(index * 0.17) * 17 + palette.lightness, 4, 92);
-                    const radius = (18 + random() * 43 + Math.abs(Math.sin(index * 0.13)) * 34) * scale;
-                    const gradient = context.createRadialGradient(center.x, center.y, 0, center.x, center.y, radius * 2.5);
-                    gradient.addColorStop(0, colorFor(hue, saturation, lightness + 12, preview ? 0.62 : 0.34));
-                    gradient.addColorStop(0.35, colorFor(hue + 35, saturation, lightness, preview ? 0.25 : 0.14));
-                    gradient.addColorStop(1, colorFor(hue - 32, saturation, lightness, 0));
-                    context.globalCompositeOperation = index % 5 === 0 ? "multiply" : "screen";
-                    context.fillStyle = gradient;
+                    const radialRadius = radius * elementScale;
+                    const radial = context.createRadialGradient(x, y, radialRadius * 0.03, x, y, radialRadius * 2.7);
+                    radial.addColorStop(0, colorFor(hue, saturation, lightness + 18, 0.78));
+                    radial.addColorStop(0.26, colorFor(hue + 28, saturation, lightness + 5, 0.42));
+                    radial.addColorStop(0.62, colorFor(hue + 68, saturation * 0.86, lightness, 0.16));
+                    radial.addColorStop(1, colorFor(hue + 115, saturation, lightness, 0));
+                    context.globalCompositeOperation = index % 4 === 0 ? "multiply" : "screen";
+                    context.fillStyle = radial;
                     context.beginPath();
-                    context.arc(center.x, center.y, radius * 2.5, 0, Math.PI * 2);
+                    context.arc(x, y, radialRadius * 2.7, 0, Math.PI * 2);
                     context.fill();
 
-                    const wobbleX = (random() - 0.5) * radius * 1.25;
-                    const wobbleY = (random() - 0.5) * radius * 1.25;
+                    const wobbleX = (random() - 0.5) * radius * 1.3;
+                    const wobbleY = (random() - 0.5) * radius * 1.3;
                     const phase = index * 0.23;
+                    context.save();
+                    context.translate(x, y);
+                    context.rotate(rotation);
+                    context.scale(elementScale, elementScale);
                     context.globalCompositeOperation = index % 3 === 0 ? "overlay" : "screen";
-                    context.fillStyle = colorFor(hue + 65, saturation * 0.88, lightness + 10, preview ? 0.12 : 0.075);
+                    context.fillStyle = colorFor(hue + 55, saturation * 0.9, lightness + 12, 0.24);
                     context.beginPath();
-                    context.moveTo(center.x + wobbleX, center.y - radius);
+                    context.moveTo(wobbleX, -radius);
                     context.bezierCurveTo(
-                        center.x + radius * Math.cos(phase), center.y - radius * 0.2,
-                        center.x + radius * 0.3, center.y + radius * Math.sin(phase) + wobbleY,
-                        center.x - wobbleX * 0.5, center.y + radius
+                        radius * Math.cos(phase), -radius * 0.2,
+                        radius * 0.3, radius * Math.sin(phase) + wobbleY,
+                        -wobbleX * 0.5, radius
                     );
                     context.bezierCurveTo(
-                        center.x - radius * 1.4, center.y + radius * 0.35,
-                        center.x - radius * 0.8, center.y - radius * 0.85,
-                        center.x + wobbleX, center.y - radius
+                        -radius * 1.4, radius * 0.35,
+                        -radius * 0.8, -radius * 0.85,
+                        wobbleX, -radius
                     );
+                    context.closePath();
                     context.fill();
-                    context.globalCompositeOperation = "source-over";
-                    context.strokeStyle = "#000";
-                    context.lineWidth = 0.8 * scale;
-                    context.stroke();
+                    context.restore();
 
-                    if (index > 0 && index % 2 === 0) {
-                        const previous = centers[index - 1];
-                        const bend = (random() - 0.5) * 160 * scale;
-                        context.globalCompositeOperation = "source-over";
-                        context.strokeStyle = "#000";
-                        context.lineWidth = (0.65 + random() * 1.8) * scale;
+                    if (index > 0) {
+                        const previous = points[index - 1];
+                        const previousX = previous.x * OUTPUT_WIDTH;
+                        const previousY = previous.y * OUTPUT_HEIGHT;
+                        const deltaX = x - previousX;
+                        const deltaY = y - previousY;
+                        const distance = Math.hypot(deltaX, deltaY);
+                        const curveAngle = (random() - 0.5) * Math.PI;
+                        const curveScale = 0.08 + random() * 0.42;
+                        const curveOffset = distance * curveScale;
+                        const bendX = (-deltaY / (distance || 1) * Math.cos(curveAngle)
+                            - deltaX / (distance || 1) * Math.sin(curveAngle)) * curveOffset;
+                        const bendY = (deltaX / (distance || 1) * Math.cos(curveAngle)
+                            - deltaY / (distance || 1) * Math.sin(curveAngle)) * curveOffset;
+                        const linear = context.createLinearGradient(previousX, previousY, x, y);
+                        linear.addColorStop(0, colorFor(paletteHue(index - 1, previous.x * 35), saturation, lightness + 12, 0.08));
+                        linear.addColorStop(0.42, colorFor(hue, saturation, lightness + 12, 0.72));
+                        linear.addColorStop(1, colorFor(paletteHue(index + 1, point.x * 35), saturation, lightness + 8, 0.08));
+
+                        context.globalCompositeOperation = index % 5 === 0 ? "multiply" : "screen";
+                        context.strokeStyle = linear;
+                        context.lineWidth = (1.5 + random() * 5 + Math.min(point.speed, 1.5) * 2.4) * scale
+                            * (0.65 + random() * 1.2);
                         context.beginPath();
-                        context.moveTo(previous.x, previous.y);
-                        context.bezierCurveTo(
-                            previous.x + bend, previous.y - bend,
-                            center.x - bend, center.y + bend,
-                            center.x, center.y
+                        context.moveTo(previousX, previousY);
+                        context.quadraticCurveTo(
+                            (previousX + x) / 2 + bendX,
+                            (previousY + y) / 2 + bendY,
+                            x,
+                            y
                         );
                         context.stroke();
+
+                        if (index % 3 === 0) {
+                            const clusterX = x + (random() - 0.5) * radius * 1.8;
+                            const clusterY = y + (random() - 0.5) * radius * 1.8;
+                            const clusterRadius = radius * (0.12 + random() * 0.2);
+                            const cluster = context.createRadialGradient(clusterX, clusterY, 0, clusterX, clusterY, clusterRadius);
+                            cluster.addColorStop(0, colorFor(hue + 145, saturation, lightness + 25, 0.5));
+                            cluster.addColorStop(1, colorFor(hue + 190, saturation, lightness, 0));
+                            context.globalCompositeOperation = "screen";
+                            context.fillStyle = cluster;
+                            context.beginPath();
+                            context.arc(clusterX, clusterY, clusterRadius, 0, Math.PI * 2);
+                            context.fill();
+                        }
                     }
-
-                    if (index > 0) drawMovementShape(points[index - 1], point, scale);
                 });
-
                 context.restore();
                 context.globalCompositeOperation = "source-over";
             }
+
+            function redrawArtwork() {
+                if (!capturing) {
+                    drawArtwork(renderedTrackingData);
+                    return;
+                }
+                drawBackground([]);
+                trackingData.forEach(point => drawCoordinateGradient(point, true));
+            }
+
+            const debouncedPaletteRender = debounce(redrawArtwork, 160);
+            const debouncedPaletteChange = debounce(rotatePalette, 220);
 
             function applyPalette() {
                 palette = {
@@ -876,19 +1003,38 @@
                     lightness: Number(lightnessControl.value)
                 };
                 updatePaletteControls();
-                drawArtwork(trackingData, capturing);
+                debouncedPaletteRender();
+            }
+
+            function previewPaletteValues() {
+                updatePaletteReadout({
+                    hue: Number(hueControl.value),
+                    saturation: Number(saturationControl.value),
+                    lightness: Number(lightnessControl.value)
+                });
             }
 
             function rotatePalette() {
-                palette.hue = (palette.hue + 47) % 360;
-                palette.saturation = palette.saturation >= 145 ? 70 : palette.saturation + 15;
-                palette.lightness = palette.lightness >= 20 ? -20 : palette.lightness + 10;
+                const hueRotation = 30 + Math.floor(Math.random() * 301);
+                const saturationRotation = 5 + Math.floor(Math.random() * 21);
+                const lightnessRotation = 4 + Math.floor(Math.random() * 13);
+                palette.hue = wrapHue(palette.hue + hueRotation);
+                palette.saturation = clamp(
+                    palette.saturation + (Math.random() < 0.5 ? -saturationRotation : saturationRotation),
+                    0,
+                    100
+                );
+                palette.lightness = clamp(
+                    palette.lightness + (Math.random() < 0.5 ? -lightnessRotation : lightnessRotation),
+                    -30,
+                    30
+                );
                 hueControl.value = String(palette.hue);
                 saturationControl.value = String(palette.saturation);
                 lightnessControl.value = String(palette.lightness);
                 updatePaletteControls();
-                drawArtwork(trackingData, capturing);
-                setStatus("Palette shifted. Fine-tune hue, saturation, and lightness with the sliders.");
+                debouncedPaletteRender();
+                setStatus(`Palette rotated: hue ${hueRotation}°, saturation ${saturationRotation} points, lightness ${lightnessRotation} points.`);
             }
 
             function downloadArtwork() {
@@ -914,7 +1060,7 @@
             }, { passive: true });
 
             window.addEventListener("resize", () => {
-                if (capturing && stopButton.classList.contains("capture-stop-detached")) {
+                if ((capturing || preparingCapture) && stopButton.classList.contains("capture-stop-detached")) {
                     centerDetachedStopButton();
                 }
             });
@@ -924,17 +1070,22 @@
             dragHandle.addEventListener("pointerup", endControlsDrag);
             dragHandle.addEventListener("pointercancel", endControlsDrag);
             dragHandle.addEventListener("keydown", nudgeControls);
+            minimizeButton.addEventListener("click", () => {
+                setControlsMinimized(!controls.classList.contains("is-minimized"));
+            });
             startButton.addEventListener("click", beginCapture);
-            stopButton.addEventListener("click", () => finishCapture("Capture stopped. Your artwork is ready to adjust or download."));
+            stopButton.addEventListener("click", () => finishCapture("Capture stopped. The final 2 seconds were excluded from the artwork.", true));
             downloadButton.addEventListener("click", downloadArtwork);
-            paletteButton.addEventListener("click", rotatePalette);
-            hueControl.addEventListener("input", applyPalette);
-            saturationControl.addEventListener("input", applyPalette);
-            lightnessControl.addEventListener("input", applyPalette);
+            paletteButton.addEventListener("click", debouncedPaletteChange);
+            // Range input previews the values; change commits and renders after the pointer is released.
+            [hueControl, saturationControl, lightnessControl].forEach(control => {
+                control.addEventListener("input", previewPaletteValues);
+                control.addEventListener("change", applyPalette);
+            });
 
             updatePaletteControls();
             updateSession();
-            drawArtwork(trackingData, false);
+            drawArtwork(renderedTrackingData);
         })();
     </script>
 </body>
