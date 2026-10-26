@@ -55,15 +55,18 @@
         }
 
         .controls {
-            position: sticky;
+            position: fixed;
             z-index: 1;
             top: 18px;
+            left: 50%;
             display: grid;
             grid-template-columns: minmax(190px, 1fr) auto;
             gap: 22px 30px;
             width: min(100% - 36px, 1080px);
-            margin: 18px auto 0;
+            margin: 0;
             padding: 22px 24px;
+            transform: translateX(-50%);
+            transition: opacity .55s ease;
             border: 1px solid var(--line);
             border-radius: 18px;
             background: var(--panel);
@@ -71,6 +74,33 @@
             -webkit-backdrop-filter: blur(22px);
             backdrop-filter: blur(22px);
         }
+
+        .drag-handle {
+            position: absolute;
+            top: 7px;
+            right: 8px;
+            z-index: 2;
+            display: grid;
+            width: 28px;
+            min-height: 24px;
+            padding: 0;
+            place-items: center;
+            border: 0;
+            color: var(--muted);
+            background: transparent;
+            font-size: 17px;
+            line-height: 1;
+            cursor: grab;
+            touch-action: none;
+        }
+
+        .drag-handle:hover:not(:disabled) {
+            border: 0;
+            color: #f1f3fa;
+            background: transparent;
+        }
+
+        .drag-handle:active { cursor: grabbing; }
 
         .brand {
             display: flex;
@@ -106,6 +136,22 @@
             flex-direction: column;
             justify-content: center;
             gap: 9px;
+        }
+
+        .session.capture-session-detached {
+            position: fixed;
+            z-index: 900;
+            top: 20px;
+            right: 20px;
+            width: min(260px, calc(100vw - 40px));
+            min-width: 0;
+            padding: 14px 16px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: var(--panel);
+            box-shadow: 0 14px 42px rgb(0 0 0 / 28%);
+            -webkit-backdrop-filter: blur(18px);
+            backdrop-filter: blur(18px);
         }
 
         .session-heading {
@@ -165,14 +211,11 @@
             display: flex;
             flex-wrap: wrap;
             align-items: center;
+            justify-content: flex-start;
             gap: 9px;
             grid-column: 1 / -1;
             padding-top: 16px;
             border-top: 1px solid var(--line);
-        }
-
-        .controls {
-            transition: opacity .55s ease;
         }
 
         .is-capturing .controls {
@@ -182,27 +225,32 @@
 
         .capture-stop-detached {
             position: fixed !important;
-            z-index: 30;
+            z-index: 1000;
             top: 0;
             left: 0;
             margin: 0;
-            opacity: .1;
-            transition: transform .55s cubic-bezier(.2, .75, .25, 1), opacity .22s ease;
+            opacity: .5;
+            transition: transform .55s cubic-bezier(.2, .75, .25, 1), opacity 1s ease-in-out;
             will-change: transform, opacity;
         }
 
-        .capture-stop-detached:hover,
-        .capture-stop-detached:focus-visible {
-            opacity: .5;
+        .capture-stop-detached,
+        .capture-stop-detached:hover:not(:disabled) {
+            border-color: #9299ad;
+            color: #9299ad;
+            background: transparent;
+        }
+
+        .capture-stop-detached:hover {
+            opacity: 1;
+        }
+
+        .capture-stop-detached:hover:not(:disabled) {
+            background: rgb(0 0 0 / 45%);
         }
 
         .capture-stop-detached.capture-stop-returning {
             opacity: 1;
-        }
-
-        .capture-stop-detached.capture-stop-returning:hover,
-        .capture-stop-detached.capture-stop-returning:focus-visible {
-            opacity: .5;
         }
 
         button {
@@ -291,10 +339,10 @@
 
         @media (max-width: 640px) {
             .controls {
+                top: 12px;
                 grid-template-columns: 1fr auto;
                 gap: 17px;
                 width: calc(100% - 24px);
-                margin-top: 12px;
                 padding: 17px;
             }
 
@@ -319,6 +367,7 @@
         </section>
 
         <section class="controls" aria-label="Artwork controls">
+            <button class="drag-handle" id="dragHandle" type="button" aria-label="Drag to move controls" title="Drag to move controls">⠿</button>
             <div class="brand">
                 <span class="eyebrow">Generative wallpaper studio</span>
                 <h1>Trace / <span style="color: var(--accent)">01</span></h1>
@@ -384,6 +433,8 @@
             const canvas = document.getElementById("artwork");
             const context = canvas.getContext("2d", { alpha: false });
             const app = document.querySelector(".app");
+            const controls = document.querySelector(".controls");
+            const dragHandle = document.getElementById("dragHandle");
             const startButton = document.getElementById("startButton");
             const stopButton = document.getElementById("stopButton");
             const stopButtonHome = stopButton.parentElement;
@@ -419,7 +470,10 @@
             let latestPosition = { x: 0.5, y: 0.5 };
             let palette = { hue: 0, saturation: 100, lightness: 0 };
             let stopPlaceholder = null;
+            let sessionPlaceholder = null;
             let stopReturnTimer = null;
+            let dragPointerId = null;
+            let dragOffset = { x: 0, y: 0 };
 
             const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
             const wrapHue = value => ((value % 360) + 360) % 360;
@@ -448,6 +502,47 @@
                 lightnessValue.textContent = lightnessValue.value;
             }
 
+            function setControlsPosition(left, top) {
+                const maxLeft = Math.max(0, window.innerWidth - controls.offsetWidth);
+                const maxTop = Math.max(0, window.innerHeight - controls.offsetHeight);
+                controls.style.left = `${clamp(left, 0, maxLeft)}px`;
+                controls.style.top = `${clamp(top, 0, maxTop)}px`;
+                controls.style.transform = "none";
+            }
+
+            function beginControlsDrag(event) {
+                if (event.button !== 0 || capturing) return;
+                const rect = controls.getBoundingClientRect();
+                dragOffset = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+                dragPointerId = event.pointerId;
+                setControlsPosition(rect.left, rect.top);
+                dragHandle.setPointerCapture(event.pointerId);
+                event.preventDefault();
+            }
+
+            function moveControls(event) {
+                if (event.pointerId !== dragPointerId) return;
+                setControlsPosition(event.clientX - dragOffset.x, event.clientY - dragOffset.y);
+            }
+
+            function endControlsDrag(event) {
+                if (event.pointerId !== dragPointerId) return;
+                dragPointerId = null;
+                if (dragHandle.hasPointerCapture(event.pointerId)) {
+                    dragHandle.releasePointerCapture(event.pointerId);
+                }
+            }
+
+            function nudgeControls(event) {
+                if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+                const rect = controls.getBoundingClientRect();
+                const step = event.shiftKey ? 30 : 10;
+                const left = rect.left + (event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0);
+                const top = rect.top + (event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0);
+                setControlsPosition(left, top);
+                event.preventDefault();
+            }
+
             function samplePosition() {
                 trackingData.push({
                     x: clamp(latestPosition.x, 0, 1),
@@ -455,6 +550,24 @@
                     time: performance.now() - captureStartedAt
                 });
                 drawPreviewPoint(trackingData[trackingData.length - 1], trackingData[trackingData.length - 2]);
+            }
+
+            function detachSessionPanel() {
+                const rect = sessionPanel.getBoundingClientRect();
+                sessionPlaceholder = document.createElement("span");
+                sessionPlaceholder.setAttribute("aria-hidden", "true");
+                sessionPlaceholder.style.cssText = `display: block; grid-column: 2; width: ${rect.width}px; height: ${rect.height}px;`;
+                sessionPanel.replaceWith(sessionPlaceholder);
+                sessionPanel.classList.add("capture-session-detached");
+                document.body.appendChild(sessionPanel);
+            }
+
+            function returnSessionPanel() {
+                sessionPanel.classList.remove("capture-session-detached");
+                if (sessionPlaceholder && sessionPlaceholder.isConnected) {
+                    sessionPlaceholder.replaceWith(sessionPanel);
+                }
+                sessionPlaceholder = null;
             }
 
             function centerDetachedStopButton() {
@@ -522,6 +635,7 @@
                 capturing = false;
                 window.clearInterval(sampleTimer);
                 sampleTimer = null;
+                returnSessionPanel();
                 app.classList.remove("is-capturing");
                 sessionPanel.classList.remove("is-capturing");
                 stopButton.disabled = true;
@@ -543,6 +657,7 @@
                 sessionPanel.classList.add("is-capturing");
                 startButton.disabled = true;
                 stopButton.disabled = false;
+                detachSessionPanel();
                 detachStopButton();
                 sessionState.textContent = "Recording movement";
                 updateSession(0);
@@ -804,6 +919,11 @@
                 }
             });
 
+            dragHandle.addEventListener("pointerdown", beginControlsDrag);
+            dragHandle.addEventListener("pointermove", moveControls);
+            dragHandle.addEventListener("pointerup", endControlsDrag);
+            dragHandle.addEventListener("pointercancel", endControlsDrag);
+            dragHandle.addEventListener("keydown", nudgeControls);
             startButton.addEventListener("click", beginCapture);
             stopButton.addEventListener("click", () => finishCapture("Capture stopped. Your artwork is ready to adjust or download."));
             downloadButton.addEventListener("click", downloadArtwork);
