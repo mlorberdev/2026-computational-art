@@ -135,6 +135,7 @@ body {
     flex-direction: column;
     justify-content: center;
     gap: 7px;
+    padding-right: 76px;
 }
 
 .brand-version { color: var(--accent); }
@@ -258,7 +259,12 @@ h1 {
     z-index: 1000;
     top: 0;
     left: 0;
-    min-width: 240px;
+    display: grid;
+    width: min(440px, calc(100vw - 24px));
+    height: 76px;
+    min-width: 0;
+    padding: 10px 12px;
+    place-items: center;
     margin: 0;
     opacity: .5;
     transition: transform .55s cubic-bezier(.2, .75, .25, 1), opacity 1s ease-in-out;
@@ -278,10 +284,6 @@ h1 {
 }
 
 .capture-stop-detached.capture-stop-active {
-    width: min(440px, calc(100vw - 24px));
-    height: auto;
-    min-height: 76px;
-    padding: 10px 12px;
     font-size: clamp(9px, 2vw, 12px);
 }
 
@@ -291,14 +293,28 @@ h1 {
     gap: 4px;
     white-space: nowrap;
     line-height: 1.25;
+    animation: prompt-settle .7s ease-out both;
 }
 
 .capture-stop-priming .stop-prompt {
-    display: inline-flex;
+    display: grid;
+    grid-template-columns: max-content 2ch;
     align-items: center;
+    justify-content: center;
     gap: 8px;
     white-space: nowrap;
     animation: prompt-pulse 1.8s ease-in-out infinite;
+}
+
+.countdown-number {
+    min-width: 2ch;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+@keyframes prompt-settle {
+    from { opacity: .5; transform: translateY(3px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes prompt-pulse {

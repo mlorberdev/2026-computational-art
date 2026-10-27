@@ -208,8 +208,6 @@
         stopPlaceholder.style.cssText = `display: block; flex: 0 0 ${rect.width}px; width: ${rect.width}px; height: ${rect.height}px;`;
         stopButton.replaceWith(stopPlaceholder);
         stopButton.classList.add("capture-stop-detached");
-        stopButton.style.width = `${Math.max(rect.width, 240)}px`;
-        stopButton.style.height = `${rect.height}px`;
         stopButton.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0)`;
         document.body.appendChild(stopButton);
         void stopButton.offsetWidth;
@@ -288,8 +286,6 @@
         preparationTimer = null;
         stopButton.classList.remove("capture-stop-priming");
         stopButton.classList.add("capture-stop-active");
-        stopButton.style.removeProperty("width");
-        stopButton.style.removeProperty("height");
         stopButtonLabel.textContent = "Move naturally. Leave a little of yourself in the image.";
         stopButtonHint.textContent = "Click here to stop and create art.";
         stopButtonHint.hidden = false;
@@ -401,7 +397,7 @@
     function setControlsMinimized(minimized) {
         const position = controls.getBoundingClientRect();
         controls.classList.toggle("is-minimized", minimized);
-        if (minimized) setControlsPosition(position.left, position.top);
+        setControlsPosition(position.left, position.top);
         minimizeButton.textContent = minimized ? "□" : "−";
         minimizeButton.setAttribute("aria-label", minimized ? "Expand controls" : "Minimize controls");
         minimizeButton.title = minimized ? "Expand controls" : "Minimize controls";
@@ -599,6 +595,10 @@
     }, { passive: true });
 
     window.addEventListener("resize", () => {
+        if (controls.style.left || controls.style.top) {
+            const rect = controls.getBoundingClientRect();
+            setControlsPosition(rect.left, rect.top);
+        }
         if ((capturing || preparingCapture) && stopButton.classList.contains("capture-stop-detached")) {
             centerDetachedStopButton();
         }
