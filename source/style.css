@@ -277,6 +277,22 @@ h1 {
     cursor: default;
 }
 
+.capture-stop-detached.capture-stop-active {
+    width: min(440px, calc(100vw - 24px));
+    height: auto;
+    min-height: 76px;
+    padding: 10px 12px;
+    font-size: clamp(9px, 2vw, 12px);
+}
+
+.capture-stop-active .stop-prompt {
+    display: grid;
+    justify-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    line-height: 1.25;
+}
+
 .capture-stop-priming .stop-prompt {
     display: inline-flex;
     align-items: center;
@@ -389,19 +405,21 @@ input[type="range"] {
 @media (max-width: 640px) {
     .controls {
         top: 12px;
-        grid-template-columns: 1fr auto;
+        grid-template-columns: minmax(0, 1fr);
         gap: 17px;
         width: calc(100% - 24px);
         padding: 17px;
     }
 
-    .session { min-width: 0; align-items: flex-end; }
-    .session-heading { justify-content: flex-end; }
-    .session-state { display: none; }
-    .session .section-label { text-align: right; }
+    .session { min-width: 0; align-items: stretch; }
+    .session-heading { justify-content: space-between; }
     .actions { gap: 8px; padding-top: 13px; }
     .actions button { flex: 1 1 42%; padding-inline: 9px; }
-    .palette-controls { flex-basis: 100%; margin: 4px 0 0; }
+    .palette-controls {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        flex-basis: 100%;
+        margin: 4px 0 0;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {

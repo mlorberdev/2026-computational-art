@@ -16,6 +16,7 @@
     const startButton = document.getElementById("startButton");
     const stopButton = document.getElementById("stopButton");
     const stopButtonLabel = document.getElementById("stopButtonLabel");
+    const stopButtonHint = document.getElementById("stopButtonHint");
     const primingCount = document.getElementById("primingCount");
     const stopButtonHome = stopButton.parentElement;
     const downloadButton = document.getElementById("downloadButton");
@@ -262,6 +263,9 @@
         app.classList.remove("is-capturing");
         sessionPanel.classList.remove("is-capturing");
         stopButton.disabled = true;
+        stopButton.classList.remove("capture-stop-active");
+        stopButtonLabel.textContent = "Stop & create art";
+        stopButtonHint.hidden = true;
         sessionState.textContent = "Artwork generated";
         updateSession(elapsed);
         const cutoff = actualElapsed - MANUAL_STOP_TAIL;
@@ -280,7 +284,14 @@
         window.clearInterval(preparationTimer);
         preparationTimer = null;
         stopButton.classList.remove("capture-stop-priming");
-        stopButtonLabel.textContent = "Stop & generate art";
+        stopButton.classList.add("capture-stop-active");
+        stopButton.style.removeProperty("width");
+        stopButton.style.removeProperty("height");
+        stopButtonLabel.textContent = "Move naturally. Leave a little of yourself in the image.";
+        stopButtonHint.textContent = "Click here to stop and create art.";
+        stopButtonHint.hidden = false;
+        void stopButton.offsetWidth;
+        centerDetachedStopButton();
         primingCount.hidden = true;
         stopButton.disabled = false;
         capturing = true;
@@ -309,6 +320,7 @@
         stopButton.disabled = true;
         stopButton.classList.add("capture-stop-priming");
         stopButtonLabel.textContent = "Pick a start point";
+        stopButtonHint.hidden = true;
         primingCount.hidden = false;
         primingCount.textContent = "5";
         detachSessionPanel();
@@ -384,7 +396,7 @@
         const position = controls.getBoundingClientRect();
         controls.classList.toggle("is-minimized", minimized);
         if (minimized) setControlsPosition(position.left, position.top);
-        minimizeButton.textContent = minimized ? "×" : "−";
+        minimizeButton.textContent = minimized ? "□" : "−";
         minimizeButton.setAttribute("aria-label", minimized ? "Expand controls" : "Minimize controls");
         minimizeButton.title = minimized ? "Expand controls" : "Minimize controls";
     }

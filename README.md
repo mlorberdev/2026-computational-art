@@ -4,13 +4,13 @@ A self-contained mouse-tracking artwork generator built with vanilla JavaScript,
 
 ## Screenshots
 
-The generated artwork fills the canvas, and the control panel minimizes when rendering is complete:
+Desktop view:
 
-![Generated wallpaper with the control panel minimized](screenshots/artwork.png)
+![Trace interface on desktop](screenshots/desktop.png)
 
-Expand the panel to start another capture, adjust the palette, or download the wallpaper:
+Mobile view:
 
-![Artwork generator with the expanded control panel](screenshots/controls.png)
+![Trace interface on a mobile viewport](screenshots/mobile.png)
 
 ## Run
 
@@ -20,7 +20,7 @@ Open `index.html` in a modern desktop browser. The page loads its styles and beh
 
 1. Select **Start capture** and choose a starting point during the five-second countdown.
 2. Move the pointer during the 20-second capture; the captured path informs the final artwork.
-3. Select **Stop & generate art** to finish early, or let the capture finish automatically.
+3. Select **Stop & create art** to finish early, or let the capture finish automatically.
 4. Adjust the palette with the sliders or select **Change palette**. Slider changes apply when released.
 5. Select **Download wallpaper** to save the 3840 × 2160 PNG.
 
@@ -36,4 +36,6 @@ source/
 screenshots/
   artwork.png
   controls.png
+  desktop.png
+  mobile.png
 ```
