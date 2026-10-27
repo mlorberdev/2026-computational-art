@@ -11,6 +11,7 @@
     const context = canvas.getContext("2d", { alpha: false });
     const app = document.querySelector(".app");
     const controls = document.querySelector(".controls");
+    const traceNumber = document.getElementById("traceNumber");
     const dragHandle = document.getElementById("dragHandle");
     const minimizeButton = document.getElementById("minimizeButton");
     const startButton = document.getElementById("startButton");
@@ -48,6 +49,8 @@
     let renderedTrackingData = [];
     let capturing = false;
     let preparingCapture = false;
+    let captureNumber = 1;
+    let hasStartedCapture = false;
     let captureStartedAt = 0;
     let sampleTimer = null;
     let preparationTimer = null;
@@ -310,6 +313,9 @@
 
     function beginCapture() {
         if (capturing || preparingCapture) return;
+        if (hasStartedCapture) captureNumber += 1;
+        hasStartedCapture = true;
+        traceNumber.textContent = String(captureNumber).padStart(2, "0");
         trackingData = [];
         renderedTrackingData = [];
         preparingCapture = true;
@@ -566,7 +572,14 @@
     function downloadArtwork() {
         try {
             const link = document.createElement("a");
-            link.download = "computational-background.png";
+            const date = new Date();
+            const dateStamp = [
+                String(date.getMonth() + 1).padStart(2, "0"),
+                String(date.getDate()).padStart(2, "0"),
+                String(date.getFullYear()).slice(-2)
+            ].join("-");
+            const captureStamp = String(captureNumber).padStart(2, "0");
+            link.download = `computational-background-${dateStamp}-${captureStamp}.png`;
             link.href = canvas.toDataURL("image/png");
             link.hidden = true;
             document.body.appendChild(link);
